@@ -1,22 +1,24 @@
-"""Step 5: scratchpad with first-run key setup, friendly errors and a quota meter."""
+"""QC Translate: type English, get Quebec French. Enter copies it."""
 import sys
 
 import deepl
 from PySide6.QtCore import QEvent, QObject, QRunnable, Qt, QThreadPool, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QComboBox,
+    QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPlainTextEdit,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
+import theme
 from config import load_key, save_key
 from translator import QcTranslator, friendly_error
 
@@ -26,7 +28,7 @@ else:
     kwin_pin = None
 
 DEBOUNCE_MS = 400  # how long you must pause typing before we call DeepL
-HINT = "Enter: copy  ·  Shift+Enter: new line  ·  Esc: clear"
+HINT = "Enter copies the French. Esc clears."
 WAYLAND_PIN_TIP = (
     "This desktop doesn't let apps pin themselves on top.\n"
     "Use your window menu's \"keep above\" option instead."
@@ -61,7 +63,7 @@ class TranslateJob(QRunnable):
 
 
 class UsageSignals(QObject):
-    done = Signal(str)
+    done = Signal(str, str)  # (short label, exact numbers for the tooltip)
 
 
 class UsageJob(QRunnable):
@@ -75,10 +77,16 @@ class UsageJob(QRunnable):
     def run(self):
         try:
             usage = self.translator.usage()
-            text = f"DeepL: {usage[0]:,} / {usage[1]:,}" if usage else ""
         except Exception:
-            text = "DeepL: usage unavailable"
-        self.signals.done.emit(text)
+            self.signals.done.emit("Quota unavailable", "")
+            return
+        if not usage:
+            self.signals.done.emit("", "")
+            return
+        used, limit = usage
+        pct = used / limit * 100
+        short = "Under 1% of quota used" if pct < 1 else f"{pct:.0f}% of quota used"
+        self.signals.done.emit(short, f"{used:,} of {limit:,} characters this month")
 
 
 # --- Window --------------------------------------------------------------------
@@ -95,16 +103,36 @@ class Scratchpad(QWidget):
         self.pool = QThreadPool()
         self.pool.setMaxThreadCount(1)
 
-        # --- Widgets ---
+        self.setObjectName("root")  # the stylesheet targets widgets by these names
         self.setWindowTitle("QC Translate")
-        self.resize(480, 340)
+        self.resize(520, 400)
+        self.setMinimumSize(380, 300)
 
-        self.register_box = QComboBox()
-        self.register_box.addItem("tu (informel)", "tu")
-        self.register_box.addItem("vous (formel)", "vous")
-        self.register_box.currentIndexChanged.connect(self.translate_now)
+        # --- Header: "English" on the left, tu|vous and Keep on top on the right ---
+        english_label = QLabel("English")
+        english_label.setProperty("role", "caption")
 
-        self.pin_box = QCheckBox("Always on top")
+        self.register_group = QButtonGroup(self)  # exclusive: one segment at a time
+        segmented = QFrame()
+        segmented.setObjectName("segmented")
+        seg_layout = QHBoxLayout(segmented)
+        seg_layout.setContentsMargins(2, 2, 2, 2)
+        seg_layout.setSpacing(2)
+        for value, tip in (("tu", "Informal"), ("vous", "Formal")):
+            button = QPushButton(value)
+            button.setCheckable(True)
+            button.setToolTip(tip)
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setProperty("register", value)
+            self.register_group.addButton(button)
+            seg_layout.addWidget(button)
+        self.register_group.buttons()[0].setChecked(True)
+        self.register_group.buttonToggled.connect(self.on_register_toggled)
+
+        self.pin_box = QPushButton("Keep on top")
+        self.pin_box.setObjectName("pin")
+        self.pin_box.setCheckable(True)
+        self.pin_box.setCursor(Qt.CursorShape.PointingHandCursor)
         self.pin_mode = self.pick_pin_mode()
         if self.pin_mode == "unsupported":
             # The request would be ignored, so don't offer a switch that does nothing.
@@ -115,34 +143,49 @@ class Scratchpad(QWidget):
             self.pin_box.setChecked(True)
         self.pin_box.toggled.connect(self.set_pinned)  # connected after setup on purpose
 
-        options = QHBoxLayout()
-        options.addWidget(QLabel("Registre :"))
-        options.addWidget(self.register_box)
-        options.addStretch()
-        options.addWidget(self.pin_box)
+        header = QHBoxLayout()
+        header.addWidget(english_label)
+        header.addStretch()
+        header.addWidget(segmented)
+        header.addSpacing(6)
+        header.addWidget(self.pin_box)
 
+        # --- The two text panes ---
         self.english = QPlainTextEdit()
-        self.english.setPlaceholderText("Type in English…")
+        self.english.setObjectName("english")
+        self.english.setPlaceholderText("Type in English…  (Shift+Enter for a new line)")
         self.english.installEventFilter(self)  # lets us intercept Enter and Esc
 
+        french_label = QLabel("Français (Québec)")
+        french_label.setProperty("role", "caption")
+
         self.french = QPlainTextEdit()
+        self.french.setObjectName("french")
         self.french.setReadOnly(True)
         self.french.setPlaceholderText("Le français apparaîtra ici…")
 
+        # --- Footer: hint or status on the left, quota on the right ---
         self.status = QLabel(HINT)
+        self.status.setObjectName("status")
         self.usage_label = QLabel("")
-        self.usage_label.setStyleSheet("color: gray;")
+        self.usage_label.setObjectName("usage")
 
-        bottom = QHBoxLayout()
-        bottom.addWidget(self.status)
-        bottom.addStretch()
-        bottom.addWidget(self.usage_label)
+        footer = QHBoxLayout()
+        footer.addWidget(self.status, 1)
+        footer.addWidget(self.usage_label)
 
         layout = QVBoxLayout(self)
-        layout.addLayout(options)
-        layout.addWidget(self.english)
-        layout.addWidget(self.french)
-        layout.addLayout(bottom)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(8)
+        layout.addLayout(header)
+        layout.addWidget(self.english, 1)
+        layout.addSpacing(4)
+        layout.addWidget(french_label)
+        layout.addWidget(self.french, 1)
+        layout.addLayout(footer)
+
+        self.apply_theme()
+        QApplication.styleHints().colorSchemeChanged.connect(self.apply_theme)
 
         if self.pin_mode == "qt":
             # Set before the window is first shown.
@@ -161,6 +204,30 @@ class Scratchpad(QWidget):
         self.english.textChanged.connect(self.timer.start)
 
         self.refresh_usage()
+
+    # --- Look and feel -------------------------------------------------------
+
+    def apply_theme(self, *_):
+        """Called at startup and whenever the system switches light/dark."""
+        self.setStyleSheet(theme.stylesheet())
+        t = theme.tokens()
+        theme.set_placeholder(self.english, t["muted"])
+        theme.set_placeholder(self.french, t["panel_hint"])
+
+    def set_state(self, widget: QWidget, name: str, value: str):
+        """Change a property the stylesheet reacts to, then make Qt re-read the styles."""
+        widget.setProperty(name, value)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
+    def show_status(self, text: str, error: bool = False):
+        self.status.setText(text)
+        self.set_state(self.status, "state", "error" if error else "")
+
+    def flash_copied(self):
+        """Brief lighter flash on the French panel: visible proof the copy happened."""
+        self.set_state(self.french, "copied", "true")
+        QTimer.singleShot(450, lambda: self.set_state(self.french, "copied", "false"))
 
     # --- Keyboard handling ---------------------------------------------------
 
@@ -185,6 +252,14 @@ class Scratchpad(QWidget):
 
     # --- Translation ---------------------------------------------------------
 
+    def current_register(self) -> str:
+        return self.register_group.checkedButton().property("register")
+
+    def on_register_toggled(self, button, checked: bool):
+        if checked:  # fires for both buttons; act once, for the newly chosen one
+            self.translate_now()
+            self.english.setFocus()
+
     def translate_now(self):
         """Skip the debounce wait (used when the tu/vous choice changes)."""
         self.timer.stop()
@@ -198,13 +273,12 @@ class Scratchpad(QWidget):
             self.french.clear()
             self.waiting = False
             self.copy_when_ready = False
-            self.status.setText(HINT)
+            self.show_status(HINT)
             return
 
         self.waiting = True
-        self.status.setText("Translating…")
-        register = self.register_box.currentData()
-        job = TranslateJob(self.translator, self.request_id, text, register)
+        self.show_status("Translating…")
+        job = TranslateJob(self.translator, self.request_id, text, self.current_register())
         job.signals.done.connect(self.show_translation)
         job.signals.failed.connect(self.show_error)
         self.pool.clear()  # drop any older request still waiting its turn
@@ -219,14 +293,14 @@ class Scratchpad(QWidget):
             self.copy_when_ready = False
             self.copy_to_clipboard()
         else:
-            self.status.setText(HINT)
+            self.show_status(HINT)
 
     def show_error(self, request_id: int, message: str):
         if request_id != self.request_id:
             return
         self.waiting = False
         self.copy_when_ready = False
-        self.status.setText(f"⚠ {message}")
+        self.show_status(message, error=True)
 
     # --- Copy, pin and quota -------------------------------------------------
 
@@ -234,7 +308,7 @@ class Scratchpad(QWidget):
         """Enter pressed. If the French is behind your typing, catch up first."""
         if self.timer.isActive() or self.waiting:
             self.copy_when_ready = True
-            self.status.setText("Translating… will copy when ready")
+            self.show_status("Translating… it will copy when ready.")
             if self.timer.isActive():
                 self.translate_now()  # don't make you wait out the debounce
             return
@@ -245,14 +319,19 @@ class Scratchpad(QWidget):
         if not french:
             return
         QApplication.clipboard().setText(french)
-        self.status.setText("Copied ✓  ·  paste it anywhere")
+        self.show_status("Copied. Paste it anywhere.")
+        self.flash_copied()
         self.refresh_usage()
 
     def refresh_usage(self):
         job = UsageJob(self.translator)
-        job.signals.done.connect(self.usage_label.setText)
+        job.signals.done.connect(self.show_usage)
         # The shared global pool, so pool.clear() above can never cancel it.
         QThreadPool.globalInstance().start(job)
+
+    def show_usage(self, short: str, detail: str):
+        self.usage_label.setText(short)
+        self.usage_label.setToolTip(detail)
 
     @staticmethod
     def pick_pin_mode() -> str:
@@ -265,7 +344,7 @@ class Scratchpad(QWidget):
     def set_pinned(self, pinned: bool):
         if self.pin_mode == "kwin":
             if not kwin_pin.set_keep_above(pinned):
-                self.status.setText("⚠ KDE didn't accept the pin request")
+                self.show_status("KDE didn't accept the request to keep the window on top.", error=True)
             return
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, pinned)
         self.show()  # changing window flags hides the window; show it again
@@ -282,7 +361,7 @@ def get_translator() -> QcTranslator | None:
     prompt = "Paste your DeepL API key\n(a free key ends in :fx):"
     while True:
         key, ok = QInputDialog.getText(
-            None, "QC Translate · setup", prompt, QLineEdit.EchoMode.Password
+            None, "QC Translate setup", prompt, QLineEdit.EchoMode.Password
         )
         if not ok:
             return None  # Cancel pressed
@@ -314,6 +393,9 @@ def get_translator() -> QcTranslator | None:
 
 def main():
     app = QApplication(sys.argv)
+    # Fusion is Qt's own neutral style: the stylesheet then looks the same
+    # on Windows, macOS and KDE instead of mixing with each system's theme.
+    app.setStyle("Fusion")
     translator = get_translator()
     if translator is None:
         return  # no key, nothing to do
