@@ -1,0 +1,62 @@
+# Builds QC Translate for Windows and macOS on GitHub's own machines.
+# Start it from the repo's Actions tab ("Run workflow"), or by pushing a tag like v1.0.
+
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install libraries
+        run: pip install -r requirements.txt
+
+      # kwin_pin is the KDE-only helper; leaving it out keeps D-Bus out of the build.
+      - name: Build
+        run: pyinstaller --noconfirm --windowed --name "QC Translate" --exclude-module kwin_pin app.py
+
+      - name: Zip the app folder
+        run: Compress-Archive -Path "dist/QC Translate" -DestinationPath "QC-Translate-Windows.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QC-Translate-Windows
+          path: QC-Translate-Windows.zip
+
+  macos:
+    runs-on: macos-latest  # Apple Silicon (M1 and newer)
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Install libraries
+        run: pip install -r requirements.txt
+
+      - name: Build
+        run: pyinstaller --noconfirm --windowed --name "QC Translate" --exclude-module kwin_pin app.py
+
+      # A writable disk image: survives an exFAT USB stick (which can't store the
+      # links inside a Mac app), and leaves room to save qc-translate.ini inside it.
+      - name: Make disk image
+        run: |
+          SIZE_MB=$(du -sm "dist/QC Translate.app" | cut -f1)
+          hdiutil create -volname "QC Translate" -srcfolder "dist/QC Translate.app" \
+            -fs HFS+ -format UDRW -size $((SIZE_MB + 50))m "QC-Translate-Mac.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: QC-Translate-Mac
+          path: QC-Translate-Mac.dmg

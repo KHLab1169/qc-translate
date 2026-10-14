@@ -1,0 +1,9 @@
+# Your DeepL key: never commit it
+qc-translate.ini
+
+# Local environment and build output
+.venv/
+__pycache__/
+build/
+dist/
+*.spec

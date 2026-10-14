@@ -1,0 +1,5 @@
+# Exact versions, so every build (yours and GitHub's) uses the same code.
+deepl==1.32.0
+PySide6==6.12.0
+# Build tool only: turns the app into a standalone program.
+pyinstaller==6.22.3

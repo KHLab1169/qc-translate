@@ -1,0 +1,61 @@
+name: Build frtrans portable
+
+on:
+  workflow_dispatch:        # run manually from the Actions tab
+  push:
+    tags: ["v*"]            # or by pushing a tag like v1.0
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: frtrans-win
+          - os: macos-latest        # Apple Silicon (M1/M2/M3...)
+            name: frtrans-mac-arm
+          - os: macos-13            # Intel Macs
+            name: frtrans-mac-intel
+          - os: ubuntu-22.04        # older glibc = runs on more distros
+            name: frtrans-linux
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install pyinstaller argostranslate pyperclip pynput
+
+      - name: Build with PyInstaller
+        run: >
+          pyinstaller --onedir --name frtrans
+          --collect-all argostranslate
+          --collect-all ctranslate2
+          --collect-all sentencepiece
+          --collect-all stanza
+          frtrans_portable.py
+
+      # Zip artifacts strip the executable bit, so tar the unix builds first.
+      - name: Package (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.name }}.tar.gz -C dist frtrans
+
+      - name: Upload (macOS / Linux)
+        if: runner.os != 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: ${{ matrix.name }}.tar.gz
+
+      - name: Upload (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/frtrans
