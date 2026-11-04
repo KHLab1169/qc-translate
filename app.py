@@ -192,7 +192,7 @@ class Scratchpad(QWidget):
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, self.pin_box.isChecked())
         elif self.pin_mode == "kwin":
             # KWin can only pin a window that's already on screen, so wait a moment.
-            QTimer.singleShot(500, lambda: self.set_pinned(self.pin_box.isChecked()))
+            QTimer.singleShot(500, self, lambda: self.set_pinned(self.pin_box.isChecked()))
 
         # --- Debounce ---
         # Every keystroke restarts the timer. Only when you pause for
@@ -227,7 +227,9 @@ class Scratchpad(QWidget):
     def flash_copied(self):
         """Brief lighter flash on the French panel: visible proof the copy happened."""
         self.set_state(self.french, "copied", "true")
-        QTimer.singleShot(450, lambda: self.set_state(self.french, "copied", "false"))
+        # Passing self.french as the context ties the timer to the panel: if the
+        # window closes before it fires, Qt cancels it instead of touching a deleted widget.
+        QTimer.singleShot(450, self.french, lambda: self.set_state(self.french, "copied", "false"))
 
     # --- Keyboard handling ---------------------------------------------------
 
