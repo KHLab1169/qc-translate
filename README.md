@@ -1,5 +1,7 @@
 # QC Translate
 
+[![Tests](https://github.com/KHLab1169/qc-translate/actions/workflows/tests.yml/badge.svg)](https://github.com/KHLab1169/qc-translate/actions/workflows/tests.yml)
+
 A small desktop app that translates English into **Quebec French** as you type.
 Type in the top box, pause, and the Québécois translation appears below.
 Press Enter to copy it, then paste it wherever you need it.
@@ -97,6 +99,28 @@ python app.py
 
 `try_translator.py` is a small terminal test for the translation part on its own.
 
+## Running the tests
+
+The tests use [pytest](https://pytest.org) and
+[pytest-qt](https://pytest-qt.readthedocs.io). A fake DeepL client stands in
+for the real one, so they need no key, no internet and use no quota.
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest
+```
+
+| Test file | What it checks |
+|---|---|
+| `tests/test_translator.py` | Requests use Canadian French and the right tu/vous setting; caching; quota; error messages |
+| `tests/test_config.py` | Where the key is read from and saved to on each system, including the USB stick |
+| `tests/test_theme.py` | Every accent has valid colours for light and dark mode, and the stylesheet builds |
+| `tests/test_app.py` | The window: live translation, typing pauses, Enter to copy, Esc to clear, error messages |
+
+GitHub runs the same tests on Windows, macOS and Linux after every push
+(`.github/workflows/tests.yml`). The badge at the top of this page shows the
+latest result.
+
 ## Building
 
 [PyInstaller](https://pyinstaller.org) turns the app into a folder you can run
@@ -155,6 +179,9 @@ MODE = "auto"       # "auto" follows the system; "dark" or "light" forces one
 | `kwin_pin.py` | Keep on top for KDE Plasma under Wayland (Linux only) |
 | `try_translator.py` | Terminal test for `translator.py` |
 | `requirements.txt` | Exact library versions used for every build |
+| `requirements-dev.txt` | Adds the test tools (pytest, pytest-qt) |
+| `tests/` | Automated tests |
+| `.github/workflows/tests.yml` | Runs the tests on Windows, macOS and Linux on GitHub |
 | `.github/workflows/build.yml` | Builds the Windows and Mac versions on GitHub |
 
 ## Known limits
